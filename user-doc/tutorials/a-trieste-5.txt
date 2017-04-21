@@ -1,0 +1,252 @@
+/**
+\page trieste-5 Trieste tutorial: Running and analyzing multi-replica simulations.
+
+\section trieste-5-aims Aims
+
+The aim of this tutorial is to show how to use PLUMED to run simulations with
+multiple replicas and how to analyze them. In particular, we will focus on cases where
+the replicas feel different biasing potentials.
+
+\section trieste-5-lo Objectives
+
+Once this tutorial is completed students will:
+
+- \highlight{TODO}
+
+\section trieste-5-resources Resources
+
+The \tarball{trieste-5} for this project contains the following files:
+- \highlight{TODO}
+
+\section trieste-5-introduction Introduction
+
+So far we always used PLUMED to run one simulation at a time. However, PLUMED can also
+be used in multi-replica algorithms. Similarly to what we did before, we will first use
+the \ref driver to understand how to prepare multi-replica input files.
+However, the very same holds when you run multi-replica MD simulations with MD codes that support them.
+For instance, in GROMACS that would be using the `-multi` option of `mdrun`.
+
+Notice that this tutorial was tested using a pre-release
+version of PLUMED 2.4. In particular, we will use a special syntax
+for multi-replica input that is only available starting with PLUMED 2.4.
+
+\section trieste-5-replicas Running multi replica simulations
+
+Imagine that you are in a directory with these files
+\verbatim
+traj.0.xtc
+traj.1.xtc
+traj.2.xtc
+plumed.dat
+\endverbatim
+That is: three trajectories and a PLUMED input files.
+Let's say that the content of `plumed.dat` is
+\plumedfile
+d: DISTANCE ATOMS=1,2
+PRINT ARG=d FILE=COLVAR
+\endplumedfile
+
+You can use the following command to process the three trajectories simultaneously:
+\verbatim
+mpirun -np 3 plumed driver --multi 3 --plumed plumed.dat --mf_xtc traj.xtc
+\endverbatim
+This command will produce three COLVAR files, namely `COLVAR.0`, `COLVAR.1`, and `COLVAR.2`.
+
+How does this work?
+
+You are here running three replicas of the `plumed` executable.
+When PLUMED opens a file for __writing__ it adds a a suffix corresponding to the replica number.
+This is done for all the possible files written by PLUMED and allows you to
+distinguish the output of different replicas redirecting it to different files.
+
+\attention
+This is true also for input files that are opened for __reading__. However, when PLUMED does not find the input file with
+the replica suffix, it looks for the file without the suffix. That's why here it is
+sufficient to provide a single `plumed.dat` file. If by mistake you include
+an additional `plumed.0.dat` file in the same directory, PLUMED will use that file for
+replica 0 (and `plumed.dat` for replicas 1 and 2). To be precise, this is true for
+all the files read by PLUMED, with the exception of PDB files where the suffix is never added.
+
+The last comment implies that if you need to process your trajectories with _different_
+input files you might do it creating files named `plumed.0.dat`, `plumed.1.dat`, and
+`plumed.2.dat`. This is correct, and this was the ony way to do multi-replica
+simulatons with different input files up to PLUMED 2.3. However,
+in the following we will see how to obtain the same effect with a new special command that has
+been introduced in PLUMED 2.4.
+
+\section trieste-5-replica-special-syntax Using special syntax for multiple replicas
+
+In many cases, we need to run multiple replicas with almost identical PLUMED files.
+These files might be prepared with cut-and-paste, which is very error prone,
+or could be set up with some smart bash or python script. Additionally,
+one can take advantage of the \ref INCLUDE keyword so as to have a shared input
+file with common definitions and specific input files with replica-dependent keywords.
+However, as of PLUMED 2.4, we introduced a simpler manner to manipulate multiple replica
+inputs with tiny differences. Look at the following example:
+
+\plumedfile
+# Compute a distance
+d: DISTANCE ATOMS=1,2
+
+# Apply a restraint.
+RESTRAINT ARG=d AT=@replicas:1.0,1.1,1.2 KAPPA=1.0
+# On replica 0, this means:
+#   RESTRAINT ARG=d AT=1.0 KAPPA=1.0
+# On replica 1, this means:
+#   RESTRAINT ARG=d AT=1.1 KAPPA=1.0
+# On replica 2, this means:
+#   RESTRAINT ARG=d AT=1.2 KAPPA=1.0
+\endplumedfile
+
+If you prepare a single `plumed.dat` file like this one and feeds it to PLUMED while using 3 replicas,
+the 3 replicas will see the very same input except for the `AT` keyword, that sets the position of the restraint.
+Replica 0 will see a restraint centered at 1.0, replica 1 centered at 1.1, and replica 2 centered at 1.2.
+
+The `@replicas:` keyword is not special for \ref RESTRAINT or for the `AT` keyword. Any keyword in PLUMED can accept that syntax.
+For instance, the following single input file can be used to setup a bias exchange metadynamics simulations:
+\plumedfile
+# Compute distance between atoms 1 and 2
+d: DISTANCE ATOMS=1,2
+
+# Compute a torsional angle
+t: TORSION ATOMS=30,31,32,33
+
+# Metadynamics.
+METAD ...
+  ARG=@replicas:d,t
+  HEIGHT=1.0
+  PACE=100
+  SIGMA=@replicas:0.1,0.3
+  GRID_MIN=@replicas:0.0,-pi
+  GRID_MAX=@replicas:2.0,+pi
+...
+# On replica 0, this means:
+#  METAD ARG=d HEIGHT=1.0 PACE=100 SIGMA=0.1 GRID_MIN=0.0 GRID_MAX=2.0
+# On replica 1, this means:
+#  METAD ARG=t HEIGHT=1.0 PACE=100 SIGMA=0.3 GRID_MIN=-pi GRID_MAX=+pi
+\endplumedfile
+
+This would be a typical setup for a bias exchange \highlight{REF} simulation.
+Notice that even though variables `d` and `t` are both read in both replicas,
+`d` is only computed on replica 0 (and `t` is only computed on replica 1).
+This is because variables that are defined but not used are never actually calculated by PLUMED.
+
+If the value that should be provided for each replica is a vector, you should use curly braces as delimiters.
+For instance, if the restraint acts on two variables, you can use the following input:
+
+\plumedfile
+# Compute distance between atoms 1 and 2
+d: DISTANCE ATOMS=10,20
+
+# Compute a torsional angle
+t: TORSION ATOMS=30,31,32,33
+
+# Apply a restraint:
+RESTRAINT ...
+  ARG=d,t
+  AT=@replicas:{{1.0,2.0} {3.0,4.0} {5.0,6.0}}
+  KAPPA=1.0,3.0
+...
+# On replica 0 this means:
+#  RESTRAINT ARG=d AT=1.0,2.0 KAPPA=1.0,3.0
+# On replica 1 this means:
+#  RESTRAINT ARG=d AT=3.0,4.0 KAPPA=1.0,3.0
+# On replica 2 this means:
+#  RESTRAINT ARG=d AT=5.0,6.0 KAPPA=1.0,3.0
+\endplumedfile
+
+Notice the double curly braces. The outer ones are used by PLUMED to know there the argument of the `AT` keyword ends,
+whereas the inner ones are used to group the values corresponding to each replica.
+Also notice that the last example can be split in multiple lines exploiting the fact that
+within multi-line statements (enclosed by pairs of `...`) newlines are replaced with simple spaces:
+\plumedfile
+d: DISTANCE ATOMS=10,20
+t: TORSION ATOMS=30,31,32,33
+RESTRAINT ...
+  ARG=d,t
+# indentation is not required (this is not python!)
+# but makes the input easier to read
+  AT=@replicas:{
+    {1.0,2.0}
+    {3.0,4.0}
+    {5.0,6.0}
+  }
+  KAPPA=1.0
+...
+\endplumedfile
+
+In short, whenever there are keywords that should vary across replicas, you should set them usign the `@replicas:` keyword.
+As mentioned above, you can always use the old syntax with separate input file, and this is recommended when the
+number of keywords that are different is large.
+
+\section trieste-5-ex-1 Running a multiple-restraint simulation
+
+\highlight{TODO: Write the input file for a multiple restraint simulation of Chi isomerization in guanine}
+
+You should write an input file that can be used to run a multiple-restraint simulation using
+32 replicas ranging between \f$-\pi\f$ and \f$+\pi\f$.
+
+\plumedfile
+# Load the pdb, useful to select atoms later
+MOLINFO STRUCTURE=ref.pdb
+
+# Compute chi angle
+chi: TORSION ATOMS=__FILL__
+
+# Compute sugar pucker variable
+puck: PUCKERING ATOMS=__FILL__
+# check the documentation of PUCKERING to pick the right atoms
+
+# Let's now apply a restraint on the chi angle
+RESTRAINT ...
+  ARG=__FILL__ # this is easy
+  AT=@replicas:{
+__FILL__
+  }
+  KAPPA=__FILL__ # this is the strenght of the restraint
+...
+
+
+\endplumedfile
+
+\section trieste-5-ex-2 Analyzing a multiple-restraint simulation
+
+\highlight{TODO: check if convergence is fast enough. If not, provide trajectories.}
+
+\highlight{TODO: Write the input file for a WHAM analysis of the previous simulation.
+Compute both the free-energy along the biased variable and the free-energy difference between
+different states. Consider four states: syn/anti C2/C3.
+}
+
+\hidden{Adding and removing replicas}
+
+\highlight{TODO: show what would happen if you remove replicas that are in the middle}.
+
+\highlight{TODO: rerun using an unbiased replica and show that the weights in the unbiased replica
+depend on the inclusion of the other replicas in the analysis}
+
+\endhidden
+
+\hidden{Analyze a bias exchange simulation}
+
+\highlight{TODO: Provide the trajectory files obtained with bias-exchange on Chi and pucker and show how to analyze them}
+
+\endhidden
+
+\hidden{Analyze a solute tempering-METAD simulation}
+
+\highlight{TODO: Provide the trajectory files obtained with a solute tempering-METAD on Chi and show how to analyze them}
+
+\endhidden
+
+\section trieste-5-ex-3 Computing statistical error
+
+\highlight{TODO: show how to use block analysis. Also discuss the problems with demuxing trajectories.}
+
+*/
+
+link: @subpage trieste-5
+
+description: This tutorial explains how to use PLUMED to analyze trajectories
+
+additional-files: a-trieste-5
