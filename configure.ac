@@ -240,6 +240,7 @@ PLUMED_CONFIG_ENABLE([rpath],[store rpath],[no])
 PLUMED_CONFIG_ENABLE([absolute-soname],[store absolute soname (Linux only - this is the default behavior on OSX). Only enable for testing!],[no])
 PLUMED_CONFIG_ENABLE([absolute-install-name],[store absolute relative (OSX only - disable to have a behavior similar to Linux). Only disable for testing!],[yes])
 PLUMED_CONFIG_ENABLE([loader-path],[use @loader_path to find libplumedKernel.dylib (OSX only)],[yes])
+PLUMED_CONFIG_ENABLE([bsymbolic],[use -Bsymbolic flag in making shared libraries (Linux only)],[yes])
 PLUMED_CONFIG_ENABLE([ld-r],[group object files],[yes])
 PLUMED_CONFIG_ENABLE([ar-cr],[use ar to build libplumedWrapper.a],[yes])
 PLUMED_CONFIG_ENABLE([static-archive],[try to build libplumed.a for static linking],[yes])
@@ -310,9 +311,6 @@ AC_PROG_FC
 # we use C++ for all the autoconf tests
 AC_LANG(C++)
 
-# log the initial flags
-LD="$CXX"
-
 if test -z "$LDSHARED" ; then
   LDSHARED="$CXX"
 fi
@@ -352,7 +350,7 @@ then
   CXX="$CXX --coverage"
   LDSHARED="$LDSHARED --coverage"
   CFLAGS="$CFLAGS --coverage"
-  LDFLAGS="$CFLAGS --coverage"
+  PLUMED_CHECK_LDFLAGS([--coverage])
   STATIC_LIBS="$STATIC_LIBS --coverage"
 fi
 
@@ -755,7 +753,6 @@ AC_DEFINE([_REENTRANT])
 
 #### Options for dynamic library to work properly ####
 AC_SUBST(SOEXT)
-AC_SUBST(LD)
 AC_SUBST(LDSHARED)
 # these are libraries that should be linked also to MD engines
 AC_SUBST(STATIC_LIBS)
@@ -784,6 +781,9 @@ if test "$shared" == true ; then
     SOEXT=so
     LDSHARED="$LDSHARED -shared"
     PLUMED_CHECK_LDFLAGS([-rdynamic])
+    if test "$bsymbolic" == true ; then
+      PLUMED_CHECK_LDFLAGS([-Wl,-Bsymbolic])
+    fi
   ;;
   (*)
     AC_MSG_NOTICE([*** Dynamic library only enabled on OSX and Linux ***])

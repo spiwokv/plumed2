@@ -258,6 +258,13 @@ void PlumedMain::cmd(const std::string & word,void*val) {
         if( nw==2 ) mydatafetcher->setData( words[1], "", val );
         else mydatafetcher->setData( words[1], words[2], val );
         break;
+      /* ADDED WITH API==6 */
+      case cmd_setErrorHandler:
+      {
+        if(val) error_handler=*static_cast<plumed_error_handler*>(val);
+        else error_handler.handler=NULL;
+      }
+      break;
       case cmd_read:
         CHECK_INIT(initialized,word);
         if(val)readInputFile(static_cast<char*>(val));
@@ -471,7 +478,7 @@ void PlumedMain::cmd(const std::string & word,void*val) {
       }
     }
 
-  } catch (Exception &e) {
+  } catch (std::exception &e) {
     if(log.isOpen()) {
       log<<"\n\n################################################################################\n\n";
       log<<e.what();
